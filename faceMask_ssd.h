@@ -105,7 +105,7 @@ namespace face_ssd{
 			vValidateRectList.push_back(tempRt);
 		}
 
-		//ÖÃĞÅ¶È´Ó´óµ½Ğ¡ÅÅĞò
+		//ç½®ä¿¡åº¦ä»å¤§åˆ°å°æ’åº
 		std::vector<int> vMaxSortList; vMaxSortList.clear();
 		std::vector<float> vTempValidateProbabilityList = vValidateProbabilityList;
 		std::sort(vTempValidateProbabilityList.begin(), \
@@ -125,7 +125,7 @@ namespace face_ssd{
 			}
 			vMaxSortList.push_back(maxInd);
 		}
-		//ºÏ²¢rect
+		//åˆå¹¶rect
 		for (int i = 0; i < vMaxSortList.size(); ++i){
 			int tempInd = vMaxSortList[i];
 			cv::Rect2f tempRect = vValidateRectList[tempInd];
@@ -139,7 +139,7 @@ namespace face_ssd{
 				}
 			}
 		}
-		//Êä³ö½á¹û
+		//è¾“å‡ºç»“æœ
 		vR.resize(vMaxSortList.size());
 		for (int i = 0; i < vMaxSortList.size(); ++i)
 		{
@@ -203,18 +203,7 @@ namespace face_ssd{
 		outBlobNames.push_back("loc_branch_concat");
 		outBlobNames.push_back("cls_branch_concat");
 		m_mapNet.forward(outputBlobs, outBlobNames);
-		//loc_0_reshape loc_1_reshape loc_2_reshape loc_3_reshape loc_4_reshape
-		/*outBlobNames.push_back("loc_0_reshape");
-		outBlobNames.push_back("loc_1_reshape");
-		outBlobNames.push_back("loc_2_reshape");
-		outBlobNames.push_back("loc_3_reshape");
-		outBlobNames.push_back("loc_4_reshape");
-		m_mapNet.forward(outputBlobs, outBlobNames);
-		cv::Mat out0 = outputBlobs[0].reshape(0, 2);
-		cv::Mat out1 = outputBlobs[1].reshape(0, 2);
-		cv::Mat out2 = outputBlobs[2].reshape(0, 2);
-		cv::Mat out3 = outputBlobs[3].reshape(0, 2);
-		cv::Mat out4 = outputBlobs[4].reshape(0, 2);*/
+		
 		cv::Mat locBlobs = outputBlobs.front().reshape(0, 4);  //channels  rows
 		cv::Mat clsBlobs = outputBlobs.back().reshape(0, 2);  //channels  rows
 
