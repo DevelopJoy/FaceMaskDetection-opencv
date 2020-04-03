@@ -4,9 +4,13 @@
 #include <string>
 
 #include <opencv2\opencv.hpp>
-#include <dnn\dnn.hpp>
+#include <opencv2\dnn\dnn.hpp>
  
 #include "anchor.h"
+#include "net.h"
+
+#define USING_CV_DNN				0
+#define USING_NCNN					1
 
 //using namespace cv;
 
@@ -162,12 +166,16 @@ namespace face_ssd{
 
 		void ReleaseParam();
 	private:
+#if USING_CV_DNN
 		cv::dnn::Net m_mapNet;
-
+#elif USING_NCNN
+		ncnn::Net mobilenet;
+#endif
 	};
 
 	bool det_ssd::InitialParam(std::string modelPath)
 	{
+#if USING_CV_DNN	
 		std::string modelTxt = modelPath + "\\face_mask_detection.prototxt";
 		std::string modelBin = modelPath + "\\face_mask_detection.caffemodel";
 
@@ -178,7 +186,15 @@ namespace face_ssd{
 
 			return false;
 		}
-
+#elif USING_NCNN
+		std::string modelTxt = modelPath + "\\faceMask.param";
+		std::string modelBin = modelPath + "\\faceMask.bin";
+		bool bF = mobilenet.load_param(modelTxt.c_str());
+		bF = mobilenet.load_model(modelBin.c_str());
+		if (-1 == bF){
+			return -1;
+		}
+#endif
 		return true;
 	}
 	
@@ -188,6 +204,8 @@ namespace face_ssd{
 		if (inMat.empty()){
 			return -1;
 		}
+
+#if USING_CV_DNN	
 		cv::Mat img;
 		cv::resize(inMat, img, cv::Size(260, 260));
 
@@ -203,16 +221,118 @@ namespace face_ssd{
 		outBlobNames.push_back("loc_branch_concat");
 		outBlobNames.push_back("cls_branch_concat");
 		m_mapNet.forward(outputBlobs, outBlobNames);
-		
+		//loc_0_reshape loc_1_reshape loc_2_reshape loc_3_reshape loc_4_reshape
+		/*outBlobNames.push_back("loc_0_reshape");
+		outBlobNames.push_back("loc_1_reshape");
+		outBlobNames.push_back("loc_2_reshape");
+		outBlobNames.push_back("loc_3_reshape");
+		outBlobNames.push_back("loc_4_reshape");
+		m_mapNet.forward(outputBlobs, outBlobNames);
+		cv::Mat out0 = outputBlobs[0].reshape(0, 2);
+		cv::Mat out1 = outputBlobs[1].reshape(0, 2);
+		cv::Mat out2 = outputBlobs[2].reshape(0, 2);
+		cv::Mat out3 = outputBlobs[3].reshape(0, 2);
+		cv::Mat out4 = outputBlobs[4].reshape(0, 2);*/
 		cv::Mat locBlobs = outputBlobs.front().reshape(0, 4);  //channels  rows
 		cv::Mat clsBlobs = outputBlobs.back().reshape(0, 2);  //channels  rows
 
 		int locSize = locBlobs.channels()*locBlobs.rows*locBlobs.cols;
 		int clsSize = clsBlobs.channels()*clsBlobs.rows*clsBlobs.cols;
-		cv::Mat partLoc(locSize / 4, 4, CV_32F, outputBlobs.front().ptr(0, 0));
-		cv::Mat partCls(clsSize / 2, 2, CV_32F, outputBlobs.back().ptr(0, 0));
+		cv::Mat concatLoc(locSize / 4, 4, CV_32F, outputBlobs.front().ptr(0, 0));
+		cv::Mat concatCls(clsSize / 2, 2, CV_32F, outputBlobs.back().ptr(0, 0));
+#elif USING_NCNN
+		const int target_size = 260;
+		int img_w = inMat.cols;
+		int img_h = inMat.rows;
+		cv::cvtColor(inMat, inMat, CV_BGR2RGB);
+		ncnn::Mat in = ncnn::Mat::from_pixels_resize(\
+			inMat.data, ncnn::Mat::PIXEL_BGR, \
+			inMat.cols, inMat.rows, \
+			target_size, target_size);
 
-		std::vector<ObjInfo> vResultList = decode_bbox(partLoc, partCls);
+		const float mean_vals[3] = { 0, 0, 0 };
+		const float norm_vals[3] = { 1.0 / 255, 1.0 / 255, 1.0 / 255 };
+		in.substract_mean_normalize(mean_vals, norm_vals);
+
+		ncnn::Extractor ex = mobilenet.create_extractor();
+		//ex.set_num_threads(4);
+
+		ex.input("data", in);
+
+		//loc
+		ncnn::Mat loc_0;
+		ncnn::Mat loc_1;
+		ncnn::Mat loc_2;
+		ncnn::Mat loc_3;
+		ncnn::Mat loc_4;
+		ex.extract("loc_0_reshape", loc_0);
+		float* ptrLoc0 = (float*)loc_0.data;
+		ex.extract("loc_1_reshape", loc_1);
+		float* ptrLoc1 = (float*)loc_1.data;
+		ex.extract("loc_2_reshape", loc_2);
+		float* ptrLoc2 = (float*)loc_2.data;
+		ex.extract("loc_3_reshape", loc_3);
+		float* ptrLoc3 = (float*)loc_3.data;
+		ex.extract("loc_4_reshape", loc_4);
+		float* ptrLoc4 = (float*)loc_4.data;
+
+		//concat
+		int locSize_0 = loc_0.w * loc_0.h * loc_0.c;
+		int locSize_1 = loc_1.w * loc_1.h * loc_1.c;
+		int locSize_2 = loc_2.w * loc_2.h * loc_2.c;
+		int locSize_3 = loc_3.w * loc_3.h * loc_3.c;
+		int locSize_4 = loc_4.w * loc_4.h * loc_4.c;
+		cv::Mat partLoc(1, locSize_0 + locSize_1 + locSize_2 + locSize_3 + locSize_4, CV_32F);
+		cv::Mat loc0(1, locSize_0, CV_32F, (float*)ptrLoc0);
+		cv::Mat loc1(1, locSize_1, CV_32F, (float*)ptrLoc1);
+		cv::Mat loc2(1, locSize_2, CV_32F, (float*)ptrLoc2);
+		cv::Mat loc3(1, locSize_3, CV_32F, (float*)ptrLoc3);
+		cv::Mat loc4(1, locSize_4, CV_32F, (float*)ptrLoc4);
+		loc0.copyTo(partLoc.colRange(0, locSize_0));
+		loc1.copyTo(partLoc.colRange(locSize_0, locSize_0 + locSize_1));
+		loc2.copyTo(partLoc.colRange(locSize_0 + locSize_1, locSize_0 + locSize_1 + locSize_2));
+		loc3.copyTo(partLoc.colRange(locSize_0 + locSize_1 + locSize_2, locSize_0 + locSize_1 + locSize_2 + locSize_3));
+		loc4.copyTo(partLoc.colRange(locSize_0 + locSize_1 + locSize_2 + locSize_3, locSize_0 + locSize_1 + locSize_2 + locSize_3 + locSize_4));
+
+		//cls
+		ncnn::Mat cls_0;
+		ncnn::Mat cls_1;
+		ncnn::Mat cls_2;
+		ncnn::Mat cls_3;
+		ncnn::Mat cls_4;
+		ex.extract("cls_0_reshape_cls_0_activation", cls_0);
+		float* ptrCls0 = (float*)cls_0.data;
+		ex.extract("cls_1_reshape_cls_1_activation", cls_1);
+		float* ptrCls1 = (float*)cls_1.data;
+		ex.extract("cls_2_reshape_cls_2_activation", cls_2);
+		float* ptrCls2 = (float*)cls_2.data;
+		ex.extract("cls_3_reshape_cls_3_activation", cls_3);
+		float* ptrCls3 = (float*)cls_3.data;
+		ex.extract("cls_4_reshape_cls_4_activation", cls_4);
+		float* ptrCls4 = (float*)cls_4.data;
+		int clsSize_0 = cls_0.w * cls_0.h * cls_0.c;
+		int clsSize_1 = cls_1.w * cls_1.h * cls_1.c;
+		int clsSize_2 = cls_2.w * cls_2.h * cls_2.c;
+		int clsSize_3 = cls_3.w * cls_3.h * cls_3.c;
+		int clsSize_4 = cls_4.w * cls_4.h * cls_4.c;
+		cv::Mat partCls(1, clsSize_0 + clsSize_1 + clsSize_2 + clsSize_3 + clsSize_4, CV_32F);
+		cv::Mat cls0(1, clsSize_0, CV_32F, (float*)ptrCls0);
+		cv::Mat cls1(1, clsSize_1, CV_32F, (float*)ptrCls1);
+		cv::Mat cls2(1, clsSize_2, CV_32F, (float*)ptrCls2);
+		cv::Mat cls3(1, clsSize_3, CV_32F, (float*)ptrCls3);
+		cv::Mat cls4(1, clsSize_4, CV_32F, (float*)ptrCls4);
+		cls0.copyTo(partCls.colRange(0, clsSize_0));
+		cls1.copyTo(partCls.colRange(clsSize_0, clsSize_0 + clsSize_1));
+		cls2.copyTo(partCls.colRange(clsSize_0 + clsSize_1, clsSize_0 + clsSize_1 + clsSize_2));
+		cls3.copyTo(partCls.colRange(clsSize_0 + clsSize_1 + clsSize_2, clsSize_0 + clsSize_1 + clsSize_2 + clsSize_3));
+		cls4.copyTo(partCls.colRange(clsSize_0 + clsSize_1 + clsSize_2 + clsSize_3, clsSize_0 + clsSize_1 + clsSize_2 + clsSize_3 + clsSize_4));
+
+		int locSize = partLoc.channels()*partLoc.rows*partLoc.cols;
+		int clsSize = partCls.channels()*partCls.rows*partCls.cols;
+		cv::Mat concatLoc(locSize / 4, 4, CV_32F, partLoc.ptr(0, 0));
+		cv::Mat concatCls(clsSize / 2, 2, CV_32F, partCls.ptr(0, 0));
+#endif
+		std::vector<ObjInfo> vResultList = decode_bbox(concatLoc, concatCls);
 		vReList = vResultList;
 		int width = inMat.cols;
 		int height = inMat.rows;
